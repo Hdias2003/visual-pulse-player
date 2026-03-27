@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Play, Pause, SkipForward } from 'lucide-react';
+import { Play, Pause, SkipForward, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface YouTubePlayerProps {
@@ -16,8 +16,8 @@ interface VideoInfo {
 
 const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: YouTubePlayerProps) => {
   const playerRef = useRef<any>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<number>(0);
+  
   const [currentInfo, setCurrentInfo] = useState<VideoInfo | null>(null);
   const [queue, setQueue] = useState<VideoInfo[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -26,6 +26,8 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
   const [isSeeking, setIsSeeking] = useState(false);
   const [isPlaylist, setIsPlaylist] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [isApiReady, setIsApiReady] = useState(false);
+  const [playerError, setPlayerError] = useState<string | null>(null);
 
   const formatTime = (t: number) => {
     const m = Math.floor(t / 60);
@@ -36,13 +38,14 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
   const progress = duration ? (currentTime / duration) * 100 : 0;
 
   const updateVideoInfo = useCallback((player: any, vidId?: string) => {
-    const data = player.getVideoData?.();
+    if (!player || !player.getVideoData) return;
+    const data = player.getVideoData();
     const id = vidId || data?.video_id || '';
     if (!id) return;
     
     setCurrentInfo({
       id,
-      title: data?.title || 'Unknown Title',
+      title: data?.title || 'Loading Title...',
       thumbnail: `https://img.youtube.com/vi/${id}/hqdefault.jpg`,
     });
     setDuration(player.getDuration?.() || 0);
@@ -50,197 +53,195 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
 
   const updateQueueFromPlaylist = useCallback((player: any) => {
     try {
-      if (!player.getPlaylist) return;
+      if (!player || !player.getPlaylist) return;
       const playlist = player.getPlaylist() || [];
       const idx = player.getPlaylistIndex?.() || 0;
       setCurrentIndex(idx);
       
       const upcoming: VideoInfo[] = [];
-      // Limiting loop to 4 items to prevent UI lag
       const maxItems = Math.min(idx + 5, playlist.length);
       for (let i = idx + 1; i < maxItems; i++) {
         upcoming.push({
           id: playlist[i],
-          title: `Next in Playlist`, // Titles aren't available until loaded by YT
+          title: `Next in Playlist`,
           thumbnail: `https://img.youtube.com/vi/${playlist[i]}/default.jpg`,
         });
       }
       setQueue(upcoming);
     } catch (e) {
-      console.error("Playlist update failed", e);
+      console.error("Playlist sync failed", e);
     }
   }, []);
 
+  // 1. Singleton API Loader
   useEffect(() => {
-    const input = videoIds[0] || '';
-    const isPlaylistInput = input.startsWith('playlist:');
-
-    setIsPlaylist(isPlaylistInput);
-    setQueue([]);
-    setCurrentIndex(0);
-
-    let playlistId = '';
-    let startVideoId = '';
-
-    if (isPlaylistInput) {
-      const parts = input.split(':');
-      playlistId = parts[1];
-      startVideoId = parts[2] || '';
-    } else {
-      startVideoId = input;
+    if (window.YT && window.YT.Player) {
+      setIsApiReady(true);
+      return;
     }
-
-    if (!startVideoId && !playlistId) return;
-
-    setCurrentInfo({
-      id: startVideoId,
-      title: 'Loading...',
-      thumbnail: startVideoId ? `https://img.youtube.com/vi/${startVideoId}/hqdefault.jpg` : '',
-    });
-
-    if (!(window as any).YT) {
+    window.onYouTubeIframeAPIReady = () => setIsApiReady(true);
+    if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
       const tag = document.createElement('script');
       tag.src = 'https://www.youtube.com/iframe_api';
       document.head.appendChild(tag);
     }
+  }, []);
 
-    const createPlayer = () => {
+  // 2. Main Player Lifecycle
+  useEffect(() => {
+    if (!isApiReady || !videoIds.length) return;
+
+    setPlayerError(null);
+    const input = videoIds[0];
+    const isPlaylistInput = input.startsWith('playlist:');
+    const parts = input.split(':');
+    const playlistId = isPlaylistInput ? parts[1] : '';
+    // HOTFIX: Aggressively clean IDs to remove stray quotes or tracking params
+    const seedVideoId = (isPlaylistInput ? (parts[2] || '') : input).replace(/['"\s]/g, '').split('&')[0];
+
+    setIsPlaylist(isPlaylistInput);
+
+    const timer = setTimeout(() => {
+      // HOTFIX: Ensure strict cleanup of the previous player instance
       if (playerRef.current) {
-        playerRef.current.destroy();
+        try { 
+          playerRef.current.destroy(); 
+          playerRef.current = null;
+        } catch(e) {}
       }
 
-      const playerVars: any = { 
-        autoplay: 1, 
-        controls: 0, 
-        modestbranding: 1,
-        rel: 0 
-      };
+      try {
+        // HOTFIX: Force-reset the DOM container to prevent internal API conflicts
+        const container = document.getElementById('yt-hidden-player-container');
+        if (container) container.innerHTML = '<div id="yt-hidden-player"></div>';
 
-      playerRef.current = new (window as any).YT.Player('yt-hidden-player', {
-        // If playlist, don't set videoId here; let loadPlaylist handle it
-        videoId: isPlaylistInput ? undefined : (startVideoId || undefined),
-        playerVars,
-        events: {
-          onReady: (event: any) => {
-            if (isPlaylistInput) {
-              event.target.loadPlaylist({
-                list: playlistId,
-                listType: 'playlist',
-                index: 0
-              });
-            } else {
-              event.target.playVideo();
-            }
-            updateVideoInfo(event.target, startVideoId);
+        playerRef.current = new window.YT.Player('yt-hidden-player', {
+          height: '200', 
+          width: '200',
+          videoId: seedVideoId || undefined, 
+          playerVars: { 
+            autoplay: 1, 
+            controls: 0, 
+            disablekb: 1,
+            fs: 0,
+            rel: 0,
+            modestbranding: 1,
+            // HOTFIX: Ensure origin is precisely set
+            origin: window.location.origin,
+            enablejsapi: 1,
+            widget_referrer: window.location.href
           },
-          onStateChange: (event: any) => {
-            const YT = (window as any).YT;
-            const state = event.data;
-            const playing = state === YT.PlayerState.PLAYING;
-
-            setIsPlaying(playing);
-            onPlayStateChange?.(playing);
-            onSimulatedAnalyser?.(playing);
-
-            if (playing) {
-              updateVideoInfo(event.target);
-              if (isPlaylistInput) {
-                // Safety delay to prevent blocking the main thread during render
-                setTimeout(() => updateQueueFromPlaylist(event.target), 1200);
+          events: {
+            onReady: (event: any) => {
+              if (isPlaylistInput && playlistId) {
+                event.target.cuePlaylist({
+                  listType: 'playlist',
+                  list: playlistId.replace(/['"\s]/g, ''),
+                  index: 0
+                });
               }
+              event.target.playVideo();
+              updateVideoInfo(event.target, seedVideoId);
+            },
+            onStateChange: (event: any) => {
+              const playing = event.data === window.YT.PlayerState.PLAYING;
+              setIsPlaying(playing);
+              onPlayStateChange?.(playing);
+              onSimulatedAnalyser?.(playing);
+              
+              if (playing) {
+                updateVideoInfo(event.target);
+                if (isPlaylistInput) {
+                  setTimeout(() => updateQueueFromPlaylist(event.target), 1500);
+                }
+              }
+            },
+            onError: (e: any) => {
+              const errors: Record<number, string> = {
+                2: "Invalid ID/URL Format.",
+                5: "HTML5 Player Error.",
+                100: "Content Not Found.",
+                101: "Embedding Restricted.",
+                150: "Region/Copyright Block."
+              };
+              setPlayerError(errors[e.data] || `Connection Reset (Code ${e.data})`);
             }
           },
-        },
-      });
-    };
-
-    if ((window as any).YT && (window as any).YT.Player) {
-      createPlayer();
-    } else {
-      (window as any).onYouTubeIframeAPIReady = createPlayer;
-    }
+        });
+      } catch (err) {
+        setPlayerError("Failed to initialize Secure Player. Check browser console.");
+      }
+    }, 800); 
 
     return () => {
+      clearTimeout(timer);
       if (playerRef.current) {
-        playerRef.current.destroy();
-        playerRef.current = null;
+        try { 
+          playerRef.current.destroy(); 
+          playerRef.current = null;
+        } catch (e) {}
       }
     };
-  }, [videoIds]); // Simplified dependencies to prevent re-initialization loops
+  }, [videoIds, isApiReady]);
 
+  // 3. Time Tracker
   useEffect(() => {
     intervalRef.current = window.setInterval(() => {
       if (playerRef.current?.getCurrentTime && !isSeeking && isPlaying) {
         setCurrentTime(playerRef.current.getCurrentTime());
       }
-    }, 500); // Increased to 500ms for better performance
+    }, 500);
     return () => clearInterval(intervalRef.current);
   }, [isSeeking, isPlaying]);
 
-  const togglePlay = () => {
-    if (!playerRef.current) return;
-    isPlaying ? playerRef.current.pauseVideo() : playerRef.current.playVideo();
-  };
-
-  const skipNext = () => playerRef.current?.nextVideo?.();
-
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setCurrentTime(parseFloat(e.target.value));
-  };
-
-  const handleSeekCommit = () => {
-    setIsSeeking(false);
-    playerRef.current?.seekTo?.(currentTime, true);
-  };
-
   return (
     <>
-      <div className="absolute -left-[9999px] w-1 h-1 overflow-hidden">
-        <div id="yt-hidden-player" ref={containerRef} />
+      {/* HOTFIX: Maintain "Visibility" but move it far outside the UI viewbox 
+          This satisfies YouTube's anti-bot visibility check better than clip-path.
+      */}
+      <div 
+        id="yt-hidden-player-container"
+        className="fixed -top-[500px] -left-[500px] w-[200px] h-[200px] pointer-events-none opacity-[0.001]"
+      >
+        <div id="yt-hidden-player" />
       </div>
 
-      {currentInfo && (
+      {playerError ? (
+        <div className="p-4 rounded-xl border border-destructive/30 bg-destructive/5 flex items-start gap-3 text-destructive">
+          <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+          <div className="text-xs space-y-1">
+            <p className="font-bold uppercase tracking-tight">Security / Policy Error</p>
+            <p className="opacity-90">{playerError}</p>
+            <Button 
+               variant="outline" 
+               size="sm" 
+               onClick={() => window.location.reload()}
+               className="mt-2 h-7 text-[10px] border-destructive/20 hover:bg-destructive/10"
+            >
+              Force Re-authenticate
+            </Button>
+          </div>
+        </div>
+      ) : currentInfo ? (
         <div className="p-4 rounded-xl border border-border bg-card/50 backdrop-blur-sm space-y-3">
           <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Now Playing</p>
           <div className="flex items-center gap-4">
-            <Button
-              onClick={togglePlay}
-              size="icon"
-              variant="ghost"
-              className="h-10 w-10 shrink-0 rounded-full border border-primary/30 text-primary hover:bg-primary/10"
-            >
+            <Button onClick={() => isPlaying ? playerRef.current?.pauseVideo() : playerRef.current?.playVideo()} 
+                    size="icon" variant="ghost" className="h-10 w-10 shrink-0 rounded-full border border-primary/30 text-primary">
               {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
             </Button>
             {currentInfo.thumbnail && (
-              <img
-                src={currentInfo.thumbnail}
-                alt={currentInfo.title}
-                className="w-16 h-11 object-cover rounded-lg border border-border shrink-0"
-              />
+              <img src={currentInfo.thumbnail} alt="" className="w-16 h-11 object-cover rounded-lg border border-border shrink-0" />
             )}
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground truncate">{currentInfo.title}</p>
               <p className="text-xs text-muted-foreground font-mono mt-1 flex items-center gap-1.5">
-                {isPlaying ? (
-                  <>
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                    Playing{isPlaylist ? ` • Track ${currentIndex + 1}` : ''}
-                  </>
-                ) : (
-                  <>
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground" />
-                    Paused
-                  </>
-                )}
+                {isPlaying ? <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" /> : <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" />}
+                {isPlaying ? 'Streaming' : 'Paused'}{isPlaylist ? ` • Track ${currentIndex + 1}` : ''}
               </p>
             </div>
             {isPlaylist && (
-              <Button
-                onClick={skipNext}
-                size="icon"
-                variant="ghost"
-                className="h-9 w-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-              >
+              <Button onClick={() => playerRef.current?.nextVideo()} size="icon" variant="ghost" className="h-9 w-9 text-muted-foreground">
                 <SkipForward className="h-4 w-4" />
               </Button>
             )}
@@ -250,37 +251,20 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
             <div className="flex items-center gap-2">
               <span className="text-xs font-mono text-muted-foreground w-10 text-right">{formatTime(currentTime)}</span>
               <input
-                type="range"
-                min={0}
-                max={duration}
-                step={0.5}
-                value={currentTime}
+                type="range" min={0} max={duration} step={0.5} value={currentTime}
                 onMouseDown={() => setIsSeeking(true)}
-                onChange={handleSeek}
-                onMouseUp={handleSeekCommit}
+                onChange={(e) => setCurrentTime(parseFloat(e.target.value))}
+                onMouseUp={() => { setIsSeeking(false); playerRef.current?.seekTo(currentTime, true); }}
                 className="flex-1 h-1.5 cursor-pointer appearance-none rounded-full bg-secondary"
-                style={{
-                  background: `linear-gradient(to right, hsl(var(--primary)) ${progress}%, hsl(var(--secondary)) ${progress}%)`
-                }}
+                style={{ background: `linear-gradient(to right, hsl(var(--primary)) ${progress}%, hsl(var(--secondary)) ${progress}%)` }}
               />
               <span className="text-xs font-mono text-muted-foreground w-10">{formatTime(duration)}</span>
             </div>
           )}
-
-          {isPlaylist && queue.length > 0 && (
-            <div className="pt-2 border-t border-border/50 space-y-2">
-              <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Up Next</p>
-              <div className="space-y-1.5">
-                {queue.map((item, idx) => (
-                  <div key={item.id + idx} className="flex items-center gap-3 py-1">
-                    <span className="text-xs font-mono text-muted-foreground/50 w-4 text-right">{currentIndex + idx + 2}</span>
-                    <img src={item.thumbnail} alt="" className="w-10 h-7 object-cover rounded border border-border/50 shrink-0" />
-                    <p className="text-xs text-muted-foreground truncate flex-1">{item.title}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        </div>
+      ) : (
+        <div className="p-8 text-center border-2 border-dashed border-border rounded-xl">
+          <p className="text-xs text-muted-foreground font-mono uppercase tracking-tighter animate-pulse">Establishing Secure Connection...</p>
         </div>
       )}
     </>
