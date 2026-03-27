@@ -60,7 +60,7 @@ const Index = () => {
           className="flex justify-center gap-2"
         >
           <button
-            onClick={() => { setMode('youtube'); setAnalyser(null); setIsPlaying(false); }}
+            onClick={() => { setMode('youtube'); setAnalyser(null); setIsPlaying(false); setSimulatedMode(false); }}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all ${
               mode === 'youtube'
                 ? 'bg-primary/15 text-primary border border-primary/30'
