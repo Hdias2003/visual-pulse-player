@@ -92,12 +92,8 @@ const Index = () => {
           {mode === 'youtube' ? (
             <div className="space-y-6">
               <YouTubeInput onSubmit={setVideoId} />
-              {videoId && <YouTubePlayer videoId={videoId} />}
               {videoId && (
-                <p className="text-center text-muted-foreground/60 text-xs font-mono">
-                  Note: Browser security prevents direct audio analysis of YouTube videos.
-                  Use Local File mode for full visualization.
-                </p>
+                <YouTubePlayer videoId={videoId} onPlayStateChange={handlePlayStateChange} />
               )}
             </div>
           ) : (
