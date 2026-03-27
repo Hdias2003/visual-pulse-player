@@ -1,3 +1,5 @@
 # Welcome to your Lovable project
 
-TODO: Document your project here
+Audio Visualizer with Youtube and Local files support
+
+https://visual-pulse-player.lovable.app/
