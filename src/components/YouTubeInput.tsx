@@ -29,42 +29,38 @@ const YouTubeInput = ({ onSubmit }: YouTubeInputProps) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = url.trim();
+    if (!trimmed) return;
 
-    // Check for playlist
+    setError('');
+    setLoading(true);
+
+    // 1. Check for Playlist first
     const playlistId = extractPlaylistId(trimmed);
+    const videoId = extractVideoId(trimmed);
+
     if (playlistId) {
-      setLoading(true);
-      setError('');
-      try {
-        // Use the YouTube oEmbed approach - we'll fetch playlist items via noembed
-        // Since we can't use the Data API without a key, we'll extract video IDs from the playlist URL
-        // For now, we load the first video from the URL and tell the player it's a playlist
-        const videoId = extractVideoId(trimmed);
-        if (videoId) {
-          // Pass both playlist info - the player will handle playlist loading via YT API
-          onSubmit([`playlist:${playlistId}:${videoId}`]);
-        } else {
-          onSubmit([`playlist:${playlistId}`]);
-        }
-      } catch {
-        setError('Failed to load playlist');
-      } finally {
-        setLoading(false);
-      }
+      // If we have a playlist ID, prioritize playlist mode.
+      // Format: playlist:LIST_ID:START_VIDEO_ID (if available)
+      const submitValue = videoId 
+        ? `playlist:${playlistId}:${videoId}` 
+        : `playlist:${playlistId}`;
+      
+      onSubmit([submitValue]);
+      setLoading(false);
       return;
     }
 
-    // Single video
-    const videoId = extractVideoId(trimmed);
+    // 2. Check for Single Video if no playlist was found
     if (videoId) {
-      setError('');
       onSubmit([videoId]);
     } else {
       setError('Invalid YouTube URL, video ID, or playlist link');
     }
+    
+    setLoading(false);
   };
 
   return (
@@ -74,16 +70,23 @@ const YouTubeInput = ({ onSubmit }: YouTubeInputProps) => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             value={url}
-            onChange={(e) => { setUrl(e.target.value); setError(''); }}
+            onChange={(e) => { 
+              setUrl(e.target.value); 
+              if (error) setError(''); 
+            }}
             placeholder="Paste YouTube URL, video ID, or playlist link..."
             className="pl-10 bg-secondary border-border font-mono text-sm placeholder:text-muted-foreground focus-visible:ring-primary"
           />
         </div>
-        <Button type="submit" disabled={loading} className="bg-primary hover:bg-primary/80 font-semibold tracking-wide">
+        <Button 
+          type="submit" 
+          disabled={loading} 
+          className="bg-primary hover:bg-primary/80 font-semibold tracking-wide min-w-[80px]"
+        >
           {loading ? 'Loading...' : 'Load'}
         </Button>
       </div>
-      {error && <p className="text-destructive text-xs font-mono">{error}</p>}
+      {error && <p className="text-destructive text-xs font-mono animate-in fade-in slide-in-from-top-1">{error}</p>}
     </form>
   );
 };
