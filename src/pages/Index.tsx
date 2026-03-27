@@ -11,6 +11,11 @@ const Index = () => {
   const [videoId, setVideoId] = useState('');
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [simulatedMode, setSimulatedMode] = useState(false);
+
+  const handleSimulatedAnalyser = useCallback((enabled: boolean) => {
+    setSimulatedMode(enabled);
+  }, []);
 
   const handleAnalyserReady = useCallback((node: AnalyserNode) => {
     setAnalyser(node);
@@ -55,7 +60,7 @@ const Index = () => {
           className="flex justify-center gap-2"
         >
           <button
-            onClick={() => { setMode('youtube'); setAnalyser(null); setIsPlaying(false); }}
+            onClick={() => { setMode('youtube'); setAnalyser(null); setIsPlaying(false); setSimulatedMode(false); }}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all ${
               mode === 'youtube'
                 ? 'bg-primary/15 text-primary border border-primary/30'
@@ -86,14 +91,14 @@ const Index = () => {
           className="space-y-6"
         >
           {/* Visualizer */}
-          <AudioVisualizer analyser={analyser} isPlaying={isPlaying} />
+          <AudioVisualizer analyser={analyser} isPlaying={isPlaying} simulatedMode={simulatedMode} />
 
           {/* Input / Player */}
           {mode === 'youtube' ? (
             <div className="space-y-6">
               <YouTubeInput onSubmit={setVideoId} />
               {videoId && (
-                <YouTubePlayer videoId={videoId} onPlayStateChange={handlePlayStateChange} />
+                <YouTubePlayer videoId={videoId} onPlayStateChange={handlePlayStateChange} onSimulatedAnalyser={handleSimulatedAnalyser} />
               )}
             </div>
           ) : (
