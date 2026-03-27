@@ -101,14 +101,26 @@ const LocalAudioPlayer = ({ onAnalyserReady, onPlayStateChange }: LocalAudioPlay
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate text-foreground">{fileName}</p>
               <div className="flex items-center gap-2 mt-1">
-                <span className="text-xs font-mono text-muted-foreground">{formatTime(currentTime)}</span>
-                <div className="flex-1 h-1 bg-secondary rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-neon-purple to-neon-cyan rounded-full transition-all duration-100"
-                    style={{ width: `${progress}%` }}
-                  />
-                </div>
-                <span className="text-xs font-mono text-muted-foreground">{formatTime(duration)}</span>
+                <span className="text-xs font-mono text-muted-foreground w-10 text-right">{formatTime(currentTime)}</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={duration || 0}
+                  step={0.1}
+                  value={currentTime}
+                  onChange={(e) => {
+                    const time = parseFloat(e.target.value);
+                    if (audioRef.current) {
+                      audioRef.current.currentTime = time;
+                      setCurrentTime(time);
+                    }
+                  }}
+                  className="flex-1 h-1.5 accent-primary cursor-pointer appearance-none rounded-full bg-secondary [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:border-0 [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-primary [&::-moz-range-thumb]:border-0 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:rounded-full"
+                  style={{
+                    background: `linear-gradient(to right, hsl(var(--primary)) ${progress}%, hsl(var(--secondary)) ${progress}%)`
+                  }}
+                />
+                <span className="text-xs font-mono text-muted-foreground w-10">{formatTime(duration)}</span>
               </div>
             </div>
             <Volume2 className="h-4 w-4 text-muted-foreground" />
