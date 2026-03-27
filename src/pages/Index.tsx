@@ -91,14 +91,14 @@ const Index = () => {
           className="space-y-6"
         >
           {/* Visualizer */}
-          <AudioVisualizer analyser={analyser} isPlaying={isPlaying} />
+          <AudioVisualizer analyser={analyser} isPlaying={isPlaying} simulatedMode={simulatedMode} />
 
           {/* Input / Player */}
           {mode === 'youtube' ? (
             <div className="space-y-6">
               <YouTubeInput onSubmit={setVideoId} />
               {videoId && (
-                <YouTubePlayer videoId={videoId} onPlayStateChange={handlePlayStateChange} />
+                <YouTubePlayer videoId={videoId} onPlayStateChange={handlePlayStateChange} onSimulatedAnalyser={handleSimulatedAnalyser} />
               )}
             </div>
           ) : (
