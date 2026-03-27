@@ -38,32 +38,36 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
   const updateVideoInfo = useCallback((player: any, vidId?: string) => {
     const data = player.getVideoData?.();
     const id = vidId || data?.video_id || '';
+    if (!id) return;
+    
     setCurrentInfo({
       id,
       title: data?.title || 'Unknown Title',
       thumbnail: `https://img.youtube.com/vi/${id}/hqdefault.jpg`,
     });
     setDuration(player.getDuration?.() || 0);
-    setCurrentTime(0);
   }, []);
 
   const updateQueueFromPlaylist = useCallback((player: any) => {
     try {
-      const playlist = player.getPlaylist?.() || [];
+      if (!player.getPlaylist) return;
+      const playlist = player.getPlaylist() || [];
       const idx = player.getPlaylistIndex?.() || 0;
       setCurrentIndex(idx);
-      // Show next 4 items
+      
       const upcoming: VideoInfo[] = [];
-      for (let i = idx + 1; i < Math.min(idx + 5, playlist.length); i++) {
+      // Limiting loop to 4 items to prevent UI lag
+      const maxItems = Math.min(idx + 5, playlist.length);
+      for (let i = idx + 1; i < maxItems; i++) {
         upcoming.push({
           id: playlist[i],
-          title: `Video ${i + 1}`,
+          title: `Next in Playlist`, // Titles aren't available until loaded by YT
           thumbnail: `https://img.youtube.com/vi/${playlist[i]}/default.jpg`,
         });
       }
       setQueue(upcoming);
-    } catch {
-      // Playlist API may not be available yet
+    } catch (e) {
+      console.error("Playlist update failed", e);
     }
   }, []);
 
@@ -105,26 +109,35 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
         playerRef.current.destroy();
       }
 
-      const playerVars: any = { autoplay: 1, controls: 0, modestbranding: 1 };
-      if (isPlaylistInput) {
-        playerVars.list = playlistId;
-        playerVars.listType = 'playlist';
-      }
+      const playerVars: any = { 
+        autoplay: 1, 
+        controls: 0, 
+        modestbranding: 1,
+        rel: 0 
+      };
 
       playerRef.current = new (window as any).YT.Player('yt-hidden-player', {
-        videoId: startVideoId || undefined,
+        // If playlist, don't set videoId here; let loadPlaylist handle it
+        videoId: isPlaylistInput ? undefined : (startVideoId || undefined),
         playerVars,
         events: {
           onReady: (event: any) => {
-            updateVideoInfo(event.target, startVideoId);
-            event.target.playVideo();
             if (isPlaylistInput) {
-              setTimeout(() => updateQueueFromPlaylist(event.target), 2000);
+              event.target.loadPlaylist({
+                list: playlistId,
+                listType: 'playlist',
+                index: 0
+              });
+            } else {
+              event.target.playVideo();
             }
+            updateVideoInfo(event.target, startVideoId);
           },
           onStateChange: (event: any) => {
             const YT = (window as any).YT;
-            const playing = event.data === YT.PlayerState.PLAYING;
+            const state = event.data;
+            const playing = state === YT.PlayerState.PLAYING;
+
             setIsPlaying(playing);
             onPlayStateChange?.(playing);
             onSimulatedAnalyser?.(playing);
@@ -132,12 +145,10 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
             if (playing) {
               updateVideoInfo(event.target);
               if (isPlaylistInput) {
-                updateQueueFromPlaylist(event.target);
+                // Safety delay to prevent blocking the main thread during render
+                setTimeout(() => updateQueueFromPlaylist(event.target), 1200);
               }
             }
-
-            // When a video ends in non-playlist single mode, nothing more needed
-            // Playlist auto-advances via YT API
           },
         },
       });
@@ -155,48 +166,39 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
         playerRef.current = null;
       }
     };
-  }, [videoIds, onPlayStateChange, onSimulatedAnalyser, updateVideoInfo, updateQueueFromPlaylist]);
+  }, [videoIds]); // Simplified dependencies to prevent re-initialization loops
 
-  // Poll current time
   useEffect(() => {
     intervalRef.current = window.setInterval(() => {
-      if (playerRef.current?.getCurrentTime && !isSeeking) {
+      if (playerRef.current?.getCurrentTime && !isSeeking && isPlaying) {
         setCurrentTime(playerRef.current.getCurrentTime());
       }
-    }, 250);
+    }, 500); // Increased to 500ms for better performance
     return () => clearInterval(intervalRef.current);
-  }, [isSeeking]);
-
-  const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setCurrentTime(parseFloat(e.target.value));
-  }, []);
-
-  const handleSeekCommit = useCallback(() => {
-    setIsSeeking(false);
-    playerRef.current?.seekTo?.(currentTime, true);
-  }, [currentTime]);
+  }, [isSeeking, isPlaying]);
 
   const togglePlay = () => {
     if (!playerRef.current) return;
-    if (isPlaying) {
-      playerRef.current.pauseVideo();
-    } else {
-      playerRef.current.playVideo();
-    }
+    isPlaying ? playerRef.current.pauseVideo() : playerRef.current.playVideo();
   };
 
-  const skipNext = () => {
-    playerRef.current?.nextVideo?.();
+  const skipNext = () => playerRef.current?.nextVideo?.();
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCurrentTime(parseFloat(e.target.value));
+  };
+
+  const handleSeekCommit = () => {
+    setIsSeeking(false);
+    playerRef.current?.seekTo?.(currentTime, true);
   };
 
   return (
     <>
-      {/* Hidden player */}
       <div className="absolute -left-[9999px] w-1 h-1 overflow-hidden">
         <div id="yt-hidden-player" ref={containerRef} />
       </div>
 
-      {/* Now Playing card */}
       {currentInfo && (
         <div className="p-4 rounded-xl border border-border bg-card/50 backdrop-blur-sm space-y-3">
           <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Now Playing</p>
@@ -232,7 +234,7 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
                 )}
               </p>
             </div>
-            {isPlaylist && queue.length > 0 && (
+            {isPlaylist && (
               <Button
                 onClick={skipNext}
                 size="icon"
@@ -244,7 +246,6 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
             )}
           </div>
 
-          {/* Seek slider */}
           {duration > 0 && (
             <div className="flex items-center gap-2">
               <span className="text-xs font-mono text-muted-foreground w-10 text-right">{formatTime(currentTime)}</span>
@@ -255,11 +256,9 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
                 step={0.5}
                 value={currentTime}
                 onMouseDown={() => setIsSeeking(true)}
-                onTouchStart={() => setIsSeeking(true)}
                 onChange={handleSeek}
                 onMouseUp={handleSeekCommit}
-                onTouchEnd={handleSeekCommit}
-                className="flex-1 h-1.5 cursor-pointer appearance-none rounded-full bg-secondary [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:border-0 [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-primary [&::-moz-range-thumb]:border-0"
+                className="flex-1 h-1.5 cursor-pointer appearance-none rounded-full bg-secondary"
                 style={{
                   background: `linear-gradient(to right, hsl(var(--primary)) ${progress}%, hsl(var(--secondary)) ${progress}%)`
                 }}
@@ -268,7 +267,6 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
             </div>
           )}
 
-          {/* Up Next queue */}
           {isPlaylist && queue.length > 0 && (
             <div className="pt-2 border-t border-border/50 space-y-2">
               <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Up Next</p>
@@ -276,11 +274,7 @@ const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: You
                 {queue.map((item, idx) => (
                   <div key={item.id + idx} className="flex items-center gap-3 py-1">
                     <span className="text-xs font-mono text-muted-foreground/50 w-4 text-right">{currentIndex + idx + 2}</span>
-                    <img
-                      src={item.thumbnail}
-                      alt={item.title}
-                      className="w-10 h-7 object-cover rounded border border-border/50 shrink-0"
-                    />
+                    <img src={item.thumbnail} alt="" className="w-10 h-7 object-cover rounded border border-border/50 shrink-0" />
                     <p className="text-xs text-muted-foreground truncate flex-1">{item.title}</p>
                   </div>
                 ))}
