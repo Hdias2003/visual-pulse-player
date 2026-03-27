@@ -1,27 +1,31 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Play, Pause } from 'lucide-react';
+import { Play, Pause, SkipForward } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface YouTubePlayerProps {
-  videoId: string;
+  videoIds: string[];
   onPlayStateChange?: (playing: boolean) => void;
   onSimulatedAnalyser?: (enabled: boolean) => void;
 }
 
 interface VideoInfo {
+  id: string;
   title: string;
   thumbnail: string;
 }
 
-const YouTubePlayer = ({ videoId, onPlayStateChange, onSimulatedAnalyser }: YouTubePlayerProps) => {
+const YouTubePlayer = ({ videoIds, onPlayStateChange, onSimulatedAnalyser }: YouTubePlayerProps) => {
   const playerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<number>(0);
-  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
+  const [currentInfo, setCurrentInfo] = useState<VideoInfo | null>(null);
+  const [queue, setQueue] = useState<VideoInfo[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
+  const [isPlaylist, setIsPlaylist] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState(0);
 
   const formatTime = (t: number) => {
     const m = Math.floor(t / 60);
@@ -31,10 +35,63 @@ const YouTubePlayer = ({ videoId, onPlayStateChange, onSimulatedAnalyser }: YouT
 
   const progress = duration ? (currentTime / duration) * 100 : 0;
 
+  const updateVideoInfo = useCallback((player: any, vidId?: string) => {
+    const data = player.getVideoData?.();
+    const id = vidId || data?.video_id || '';
+    setCurrentInfo({
+      id,
+      title: data?.title || 'Unknown Title',
+      thumbnail: `https://img.youtube.com/vi/${id}/hqdefault.jpg`,
+    });
+    setDuration(player.getDuration?.() || 0);
+    setCurrentTime(0);
+  }, []);
+
+  const updateQueueFromPlaylist = useCallback((player: any) => {
+    try {
+      const playlist = player.getPlaylist?.() || [];
+      const idx = player.getPlaylistIndex?.() || 0;
+      setCurrentIndex(idx);
+      // Show next 4 items
+      const upcoming: VideoInfo[] = [];
+      for (let i = idx + 1; i < Math.min(idx + 5, playlist.length); i++) {
+        upcoming.push({
+          id: playlist[i],
+          title: `Video ${i + 1}`,
+          thumbnail: `https://img.youtube.com/vi/${playlist[i]}/default.jpg`,
+        });
+      }
+      setQueue(upcoming);
+    } catch {
+      // Playlist API may not be available yet
+    }
+  }, []);
+
   useEffect(() => {
-    setVideoInfo({
+    const input = videoIds[0] || '';
+    const isPlaylistInput = input.startsWith('playlist:');
+
+    setIsPlaylist(isPlaylistInput);
+    setQueue([]);
+    setCurrentIndex(0);
+
+    let playlistId = '';
+    let startVideoId = '';
+
+    if (isPlaylistInput) {
+      const parts = input.split(':');
+      playlistId = parts[1];
+      startVideoId = parts[2] || '';
+    } else {
+      startVideoId = input;
+    }
+
+    if (!startVideoId && !playlistId) return;
+
+    setCurrentInfo({
+      id: startVideoId,
       title: 'Loading...',
-      thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+      thumbnail: startVideoId ? `https://img.youtube.com/vi/${startVideoId}/hqdefault.jpg` : '',
     });
 
     if (!(window as any).YT) {
@@ -47,27 +104,40 @@ const YouTubePlayer = ({ videoId, onPlayStateChange, onSimulatedAnalyser }: YouT
       if (playerRef.current) {
         playerRef.current.destroy();
       }
+
+      const playerVars: any = { autoplay: 1, controls: 0, modestbranding: 1 };
+      if (isPlaylistInput) {
+        playerVars.list = playlistId;
+        playerVars.listType = 'playlist';
+      }
+
       playerRef.current = new (window as any).YT.Player('yt-hidden-player', {
-        videoId,
-        playerVars: { autoplay: 1, controls: 0, modestbranding: 1 },
+        videoId: startVideoId || undefined,
+        playerVars,
         events: {
           onReady: (event: any) => {
-            const data = event.target.getVideoData();
-            setVideoInfo({
-              title: data.title || 'Unknown Title',
-              thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-            });
-            setDuration(event.target.getDuration() || 0);
+            updateVideoInfo(event.target, startVideoId);
             event.target.playVideo();
+            if (isPlaylistInput) {
+              setTimeout(() => updateQueueFromPlaylist(event.target), 2000);
+            }
           },
           onStateChange: (event: any) => {
-            const playing = event.data === (window as any).YT.PlayerState.PLAYING;
+            const YT = (window as any).YT;
+            const playing = event.data === YT.PlayerState.PLAYING;
             setIsPlaying(playing);
             onPlayStateChange?.(playing);
             onSimulatedAnalyser?.(playing);
+
             if (playing) {
-              setDuration(playerRef.current?.getDuration?.() || 0);
+              updateVideoInfo(event.target);
+              if (isPlaylistInput) {
+                updateQueueFromPlaylist(event.target);
+              }
             }
+
+            // When a video ends in non-playlist single mode, nothing more needed
+            // Playlist auto-advances via YT API
           },
         },
       });
@@ -85,7 +155,7 @@ const YouTubePlayer = ({ videoId, onPlayStateChange, onSimulatedAnalyser }: YouT
         playerRef.current = null;
       }
     };
-  }, [videoId, onPlayStateChange, onSimulatedAnalyser]);
+  }, [videoIds, onPlayStateChange, onSimulatedAnalyser, updateVideoInfo, updateQueueFromPlaylist]);
 
   // Poll current time
   useEffect(() => {
@@ -98,15 +168,12 @@ const YouTubePlayer = ({ videoId, onPlayStateChange, onSimulatedAnalyser }: YouT
   }, [isSeeking]);
 
   const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = parseFloat(e.target.value);
-    setCurrentTime(time);
+    setCurrentTime(parseFloat(e.target.value));
   }, []);
 
-  const handleSeekCommit = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+  const handleSeekCommit = useCallback(() => {
     setIsSeeking(false);
-    if (playerRef.current?.seekTo) {
-      playerRef.current.seekTo(currentTime, true);
-    }
+    playerRef.current?.seekTo?.(currentTime, true);
   }, [currentTime]);
 
   const togglePlay = () => {
@@ -118,6 +185,10 @@ const YouTubePlayer = ({ videoId, onPlayStateChange, onSimulatedAnalyser }: YouT
     }
   };
 
+  const skipNext = () => {
+    playerRef.current?.nextVideo?.();
+  };
+
   return (
     <>
       {/* Hidden player */}
@@ -126,7 +197,7 @@ const YouTubePlayer = ({ videoId, onPlayStateChange, onSimulatedAnalyser }: YouT
       </div>
 
       {/* Now Playing card */}
-      {videoInfo && (
+      {currentInfo && (
         <div className="p-4 rounded-xl border border-border bg-card/50 backdrop-blur-sm space-y-3">
           <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Now Playing</p>
           <div className="flex items-center gap-4">
@@ -138,18 +209,20 @@ const YouTubePlayer = ({ videoId, onPlayStateChange, onSimulatedAnalyser }: YouT
             >
               {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
             </Button>
-            <img
-              src={videoInfo.thumbnail}
-              alt={videoInfo.title}
-              className="w-16 h-11 object-cover rounded-lg border border-border shrink-0"
-            />
+            {currentInfo.thumbnail && (
+              <img
+                src={currentInfo.thumbnail}
+                alt={currentInfo.title}
+                className="w-16 h-11 object-cover rounded-lg border border-border shrink-0"
+              />
+            )}
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground truncate">{videoInfo.title}</p>
+              <p className="text-sm font-medium text-foreground truncate">{currentInfo.title}</p>
               <p className="text-xs text-muted-foreground font-mono mt-1 flex items-center gap-1.5">
                 {isPlaying ? (
                   <>
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                    Playing
+                    Playing{isPlaylist ? ` • Track ${currentIndex + 1}` : ''}
                   </>
                 ) : (
                   <>
@@ -159,6 +232,16 @@ const YouTubePlayer = ({ videoId, onPlayStateChange, onSimulatedAnalyser }: YouT
                 )}
               </p>
             </div>
+            {isPlaylist && queue.length > 0 && (
+              <Button
+                onClick={skipNext}
+                size="icon"
+                variant="ghost"
+                className="h-9 w-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+              >
+                <SkipForward className="h-4 w-4" />
+              </Button>
+            )}
           </div>
 
           {/* Seek slider */}
@@ -182,6 +265,26 @@ const YouTubePlayer = ({ videoId, onPlayStateChange, onSimulatedAnalyser }: YouT
                 }}
               />
               <span className="text-xs font-mono text-muted-foreground w-10">{formatTime(duration)}</span>
+            </div>
+          )}
+
+          {/* Up Next queue */}
+          {isPlaylist && queue.length > 0 && (
+            <div className="pt-2 border-t border-border/50 space-y-2">
+              <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Up Next</p>
+              <div className="space-y-1.5">
+                {queue.map((item, idx) => (
+                  <div key={item.id + idx} className="flex items-center gap-3 py-1">
+                    <span className="text-xs font-mono text-muted-foreground/50 w-4 text-right">{currentIndex + idx + 2}</span>
+                    <img
+                      src={item.thumbnail}
+                      alt={item.title}
+                      className="w-10 h-7 object-cover rounded border border-border/50 shrink-0"
+                    />
+                    <p className="text-xs text-muted-foreground truncate flex-1">{item.title}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

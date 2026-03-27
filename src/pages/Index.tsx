@@ -8,7 +8,7 @@ import LocalAudioPlayer from '@/components/LocalAudioPlayer';
 
 const Index = () => {
   const [mode, setMode] = useState<'youtube' | 'local'>('youtube');
-  const [videoId, setVideoId] = useState('');
+  const [videoIds, setVideoIds] = useState<string[]>([]);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [simulatedMode, setSimulatedMode] = useState(false);
@@ -71,7 +71,7 @@ const Index = () => {
             YouTube
           </button>
           <button
-            onClick={() => { setMode('local'); setVideoId(''); }}
+            onClick={() => { setMode('local'); setVideoIds([]); }}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all ${
               mode === 'local'
                 ? 'bg-accent/15 text-accent border border-accent/30'
@@ -96,9 +96,9 @@ const Index = () => {
           {/* Input / Player */}
           {mode === 'youtube' ? (
             <div className="space-y-6">
-              <YouTubeInput onSubmit={setVideoId} />
-              {videoId && (
-                <YouTubePlayer videoId={videoId} onPlayStateChange={handlePlayStateChange} onSimulatedAnalyser={handleSimulatedAnalyser} />
+              <YouTubeInput onSubmit={setVideoIds} />
+              {videoIds.length > 0 && (
+                <YouTubePlayer videoIds={videoIds} onPlayStateChange={handlePlayStateChange} onSimulatedAnalyser={handleSimulatedAnalyser} />
               )}
             </div>
           ) : (
