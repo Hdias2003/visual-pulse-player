@@ -11,6 +11,11 @@ const Index = () => {
   const [videoId, setVideoId] = useState('');
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [simulatedMode, setSimulatedMode] = useState(false);
+
+  const handleSimulatedAnalyser = useCallback((enabled: boolean) => {
+    setSimulatedMode(enabled);
+  }, []);
 
   const handleAnalyserReady = useCallback((node: AnalyserNode) => {
     setAnalyser(node);
